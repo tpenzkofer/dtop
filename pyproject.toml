@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dtop"
+description = "A btop-styled terminal UI to monitor and manage Docker containers"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "tpenzkofer" }]
+requires-python = ">=3.8"
+keywords = ["docker", "tui", "monitoring", "btop", "containers", "terminal"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/tpenzkofer/dtop"
+Repository = "https://github.com/tpenzkofer/dtop"
+Issues = "https://github.com/tpenzkofer/dtop/issues"
+
+[project.scripts]
+dtop = "dtop:main"
+
+[tool.setuptools]
+py-modules = ["dtop"]
+
+[tool.setuptools.dynamic]
+version = { attr = "dtop.__version__" }
