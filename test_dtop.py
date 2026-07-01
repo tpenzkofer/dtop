@@ -407,6 +407,35 @@ def t_wrap():
 check("wrap_toggle", t_wrap)
 
 
+# 22. demo mode: curated self-contained data for every view
+def t_demo():
+    dtop.DEMO = True
+    try:
+        m = dtop.Model()
+        dtop.build_demo(m)
+        assert len(m.order) == len(dtop._DEMO_SPECS)
+        assert any(m.conts[c].state == "exited" for c in m.order), \
+            "demo should include a stopped container"
+        app = dtop.App(m)
+        app.compute_visible()
+        assert app.visible
+        for sz in [(160, 48), (120, 40), (90, 24)]:
+            app.render(*sz)
+        for _ in range(8):          # animation must not raise
+            dtop.demo_tick(m)
+        app.render(160, 48)
+        cid = m.order[0]
+        assert dtop._DEMO["logs"][cid], "no demo logs"
+        assert dtop._demo_fs("/"), "no demo filesystem"
+        insp = dtop._demo_inspect(cid)
+        assert insp["NetworkSettings"]["Networks"], "no demo network"
+        net = dtop._DEMO["meta"][cid]["net"]
+        assert dtop._demo_peers(net), "no demo peers"
+    finally:
+        dtop.DEMO = False
+check("demo_mode", t_demo)
+
+
 print()
 if fails:
     print(f"FAILED: {len(fails)} -> {fails}")

@@ -75,12 +75,24 @@ sudo install -m755 dtop.py /usr/local/bin/dtop
 ```
 dtop [options]
 
+  --demo           run with curated fake data (no Docker needed)
   --theme NAME     start with a theme (btop/gruvbox/dracula/nord/tokyo-night/matrix)
   --list-themes    list available themes and exit
   --selftest       render one frame to stdout and exit (no TTY needed)
   --version        print version
   -h, --help       show help
 ```
+
+### Try it without Docker
+
+```bash
+dtop --demo               # full interactive UI with lively fake data
+dtop --demo --theme dracula
+```
+
+`--demo` populates a realistic set of containers with animated graphs, colorful
+logs, and working detail/network/filesystem views — handy for trying it out or
+grabbing a screenshot. Combine with `--selftest` to print a single frame.
 
 ### Keys
 

@@ -17,14 +17,21 @@ import os
 import re
 import sys
 import json
+import math
 import time
+import random
 import select
 import signal
+import hashlib
 import subprocess
 import threading
 import collections
 
 __version__ = "0.1.0"
+
+# demo mode: when True, all docker-backed helpers serve curated fake data
+DEMO = False
+_DEMO = {"logs": {}, "meta": {}}
 
 # ----------------------------------------------------------------------------
 # Terminal helpers
@@ -856,6 +863,9 @@ def update_host(model):
 # Docker actions
 # ----------------------------------------------------------------------------
 def docker_action(action, cid, name, toast):
+    if DEMO:
+        toast(f"{action} {name} — demo mode, no real action", Theme.info)
+        return
     def run():
         args = {
             "start": ["docker", "start", cid],
@@ -879,6 +889,8 @@ def docker_action(action, cid, name, toast):
 
 
 def get_logs(cid, tail=500, timestamps=True):
+    if DEMO:
+        return list(_DEMO["logs"].get(cid, ["(no logs)"]))[-tail:]
     args = ["docker", "logs", "--tail", str(tail)]
     if timestamps:
         args.append("--timestamps")
@@ -892,6 +904,8 @@ def get_logs(cid, tail=500, timestamps=True):
 
 
 def get_inspect(cid):
+    if DEMO:
+        return json.dumps([_demo_inspect(cid)], indent=4).splitlines()
     try:
         p = subprocess.run(["docker", "inspect", cid],
                            capture_output=True, text=True, timeout=20)
@@ -901,6 +915,8 @@ def get_inspect(cid):
 
 
 def inspect_json(cid):
+    if DEMO:
+        return _demo_inspect(cid)
     try:
         p = subprocess.run(["docker", "inspect", cid],
                            capture_output=True, text=True, timeout=20)
@@ -913,6 +929,8 @@ def inspect_json(cid):
 def list_container_dir(cid, path):
     """Return (entries, error). Each entry is (name, is_dir). Uses `ls`
     inside the container; degrades gracefully if ls is absent."""
+    if DEMO:
+        return _demo_fs(path), ""
     script = ("LC_ALL=C ls -Ap --group-directories-first -- %s 2>/dev/null "
               "|| LC_ALL=C ls -Ap -- %s") % (_shq(path), _shq(path))
     try:
@@ -1034,6 +1052,8 @@ def build_network_view(cid, name, model):
 
 def _network_peers(net, self_cid):
     """Return [(short_id, name, ipv4), ...] for containers on `net`."""
+    if DEMO:
+        return _demo_peers(net)
     try:
         p = subprocess.run(["docker", "network", "inspect", net],
                            capture_output=True, text=True, timeout=15)
@@ -1965,8 +1985,304 @@ def start_threads(model):
     return stop
 
 
+# ----------------------------------------------------------------------------
+# Demo mode — curated, self-contained data for a nice screenshot
+# ----------------------------------------------------------------------------
+# name, image, project, running, cpu%, mem%, mem_bytes, pids, rx B/s, tx B/s
+_DEMO_SPECS = [
+    ("worker-ingest",  "acme/worker:2.4",           "jobs",          1, 88, 33, 512e6, 41,  42e3, 12e3),
+    ("api-gateway",    "traefik:v3.1",              "edge",          1, 61, 24, 384e6, 28, 320e3, 260e3),
+    ("worker-render",  "acme/worker:2.4",           "jobs",          1, 73, 30, 486e6, 38,  20e3, 8e3),
+    ("web-frontend",   "nginx:1.27-alpine",         "edge",          1, 34, 18, 220e6, 14, 180e3, 90e3),
+    ("prometheus",     "prom/prometheus:v2.54",     "observability", 1, 23, 28, 540e6, 19, 140e3, 30e3),
+    ("postgres-main",  "postgres:16",               "data",          1, 12, 41, 648e6, 53,  60e3, 220e3),
+    ("grafana",        "grafana/grafana:11.2",      "observability", 1,  6, 12, 214e6, 17,  24e3, 60e3),
+    ("redis-cache",    "redis:7.4",                 "data",          1,  4,  6,  96e6,  6, 512e3, 480e3),
+    ("minio",          "minio/minio:latest",        "data",          1,  2,  5,  92e6, 11,   8e3, 4e3),
+    ("nats",           "nats:2.10",                 "edge",          1,  1,  2,  34e6,  9,   6e3, 6e3),
+    ("elasticsearch",  "elasticsearch:8.15.0",      "observability", 0,  0,  0,     0,  0,     0, 0),
+    ("backup-nightly", "offen/docker-volume-backup", "ops",          0,  0,  0,     0,  0,     0, 0),
+]
+_DEMO_NETS = {  # project -> (network name, subnet, gateway)
+    "edge": ("edge-net", "172.20.1", "172.20.1.1"),
+    "jobs": ("jobs-net", "172.20.2", "172.20.2.1"),
+    "data": ("data-net", "172.20.3", "172.20.3.1"),
+    "observability": ("obs-net", "172.20.4", "172.20.4.1"),
+    "ops": ("ops-net", "172.20.5", "172.20.5.1"),
+}
+_DEMO_PORTS = {
+    "web-frontend": {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]},
+    "api-gateway": {"443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "443"}],
+                    "80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "80"}]},
+    "grafana": {"3000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "3000"}]},
+    "prometheus": {"9090/tcp": [{"HostIp": "0.0.0.0", "HostPort": "9090"}]},
+    "minio": {"9000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "9000"}]},
+    "postgres-main": {"5432/tcp": []},
+    "redis-cache": {"6379/tcp": []},
+}
+
+
+def _demo_cid(name):
+    return hashlib.md5(name.encode()).hexdigest()[:12]
+
+
+def _demo_series(base, amp, period, n=150, spikes=False):
+    out = []
+    ph = random.uniform(0, 6.28)
+    for i in range(n):
+        v = base + base * amp * math.sin(i / period + ph)
+        v += random.uniform(-base * 0.12, base * 0.12)
+        if spikes and random.random() < 0.06:
+            v += base * 0.6
+        out.append(max(0.0, v))
+    return out
+
+
+_DEMO_LOG_TMPL = {
+    "nginx": ['{ip} - - "GET / HTTP/1.1" 200 1024 "-" "Mozilla/5.0"',
+              '{ip} - - "GET /assets/app.{h}.js HTTP/1.1" 200 88213',
+              '{ip} - - "GET /api/health HTTP/1.1" 200 2',
+              '[warn] {ip} upstream api-gateway response slow: 812ms',
+              '{ip} - - "POST /login HTTP/1.1" 302 0',
+              '[error] {ip} upstream timed out (110: Connection timed out)'],
+    "traefik": ['level=info msg="Configuration loaded from flags."',
+                'level=info msg="Server up" address="[::]:443"',
+                'level=warning msg="No default certificate, generating one"',
+                '{ip} - "GET /dashboard/ HTTP/2.0" 200 1567ms',
+                'level=error msg="service \\"api@docker\\" error: 502"'],
+    "worker": ['job {h} started (queue=ingest)',
+               'job {h} processed 1284 records in 2.3s',
+               'level=info msg="checkpoint flushed"',
+               '[warn] retry job {h} attempt 2/5 (backoff 4s)',
+               'job {h} processed 903 records in 1.7s',
+               '[error] job {h} failed: connection reset by peer'],
+    "postgres": ['LOG:  database system is ready to accept connections',
+                 'LOG:  checkpoint starting: time',
+                 'LOG:  checkpoint complete: wrote 214 buffers (1.3%)',
+                 'LOG:  connection received: host={ip} port=54233',
+                 'WARNING:  there is already a transaction in progress'],
+    "redis": ['* Background saving started by pid {p}',
+              '* Background saving terminated with success',
+              '* 10 changes in 300 seconds. Saving...',
+              '# Warning: high memory usage, maxmemory-policy=allkeys-lru'],
+    "prometheus": ['level=info ts=T caller=main.go msg="Server is ready"',
+                   'level=info ts=T caller=head.go msg="head GC completed"',
+                   'level=warn ts=T caller=scrape.go msg="scrape target down" job=node',
+                   'level=info ts=T caller=compact.go msg="compaction done"'],
+    "grafana": ['logger=infra.usagestats level=info msg="Usage stats sent"',
+                'logger=http.server level=info msg="request" method=GET status=200',
+                'logger=live level=info msg="client connected" user=admin',
+                'logger=alerting level=warn msg="no notifiers configured"'],
+    "generic": ['level=info msg="service started"',
+                'level=info msg="handling request" id={h}',
+                'level=warn msg="config value deprecated"',
+                'level=info msg="ok"'],
+}
+
+
+def _demo_tmpl_for(image, name):
+    key = "generic"
+    for k in ("nginx", "traefik", "worker", "postgres", "redis", "prometheus",
+              "grafana"):
+        if k in image or k in name:
+            key = k
+            break
+    return _DEMO_LOG_TMPL[key]
+
+
+def _demo_log_line(image, name, ip):
+    t = random.choice(_demo_tmpl_for(image, name))
+    return t.format(ip=ip, h=hashlib.md5(str(random.random()).encode())
+                    .hexdigest()[:8], p=random.randint(20, 900),
+                    T=time.strftime("%H:%M:%S"))
+
+
+def _demo_logs(image, name, ip, n=60):
+    tmpl = _demo_tmpl_for(image, name)
+    out = []
+    for i in range(n):
+        line = tmpl[i % len(tmpl)]
+        out.append("2026-07-01T14:%02d:%02dZ " % (i % 60, (i * 7) % 60)
+                   + line.format(ip=ip, h="%08x" % (i * 2654435761 & 0xffffffff),
+                                 p=20 + i, T="14:%02d:%02d" % (i % 60, i % 47)))
+    return out
+
+
+def build_demo(model):
+    random.seed()
+    model.docker_ver = "27.3.1"
+    model.host = "demo-host"
+    model.n_images = 42
+    model.conts = {}
+    model.order = []
+    for i, sp in enumerate(_DEMO_SPECS):
+        name, image, proj, run, cpu, memp, memu, pids, rx, tx = sp
+        cid = _demo_cid(name)
+        netname, subnet, gw = _DEMO_NETS[proj]
+        ip = f"{subnet}.{i + 2}"
+        c = Container(cid)
+        c.name, c.image, c.compose = name, image, proj
+        c.state = "running" if run else "exited"
+        c.status = ("Up " + random.choice(["2 hours", "37 minutes", "5 days",
+                                            "3 hours", "8 days"])) if run else \
+                   ("Exited (0) " + random.choice(["12 minutes", "1 hour",
+                                                   "3 days"]) + " ago")
+        c.networks = netname
+        c.ports = ", ".join(sorted(_DEMO_PORTS.get(name, {}).keys())) or ""
+        c.pids, c.cpu, c.mem_pct, c.mem_used = pids, cpu, memp, memu
+        c.mem_limit = 2e9
+        c.net_rx_rate, c.net_tx_rate = rx, tx
+        if run:
+            c.cpu_h = collections.deque(
+                _demo_series(cpu, 0.3, 7, spikes=cpu > 55), maxlen=HIST)
+            c.mem_h = collections.deque(
+                _demo_series(memp, 0.12, 11), maxlen=HIST)
+            c.rx_h = collections.deque(
+                _demo_series(rx, 0.6, 5, spikes=True), maxlen=HIST)
+            c.tx_h = collections.deque(
+                _demo_series(tx, 0.6, 6, spikes=True), maxlen=HIST)
+        model.conts[cid] = c
+        model.order.append(cid)
+        _DEMO["meta"][cid] = {"name": name, "image": image, "proj": proj,
+                              "net": netname, "gw": gw, "ip": ip,
+                              "ports": _DEMO_PORTS.get(name, {})}
+        _DEMO["logs"][cid] = _demo_logs(image, name, ip) if run else \
+            ["container exited with code 0"]
+    # host
+    n = model.ncpu
+    model.cpu_cores = [random.uniform(12, 92) for _ in range(n)]
+    model.cpu_total = sum(model.cpu_cores) / n
+    model.cpu_h = collections.deque(_demo_series(46, 0.4, 9), maxlen=HIST)
+    model.mem_total = 32 * 2 ** 30
+    model.mem_used = int(13.8 * 2 ** 30)
+    model.mem_pct = 100.0 * model.mem_used / model.mem_total
+    model.mem_h = collections.deque(_demo_series(model.mem_pct, 0.06, 13),
+                                    maxlen=HIST)
+    model.swap_total = 8 * 2 ** 30
+    model.swap_used = int(0.6 * 2 ** 30)
+    model.load = (3.2, 2.7, 2.1)
+
+
+def demo_tick(model):
+    with model.lock:
+        for cid in model.order:
+            c = model.conts.get(cid)
+            if not c or c.state != "running":
+                continue
+            c.cpu = min(130.0, max(0.2, c.cpu + random.uniform(-7, 7)))
+            c.mem_pct = min(96.0, max(0.1, c.mem_pct + random.uniform(-1, 1)))
+            c.mem_used = c.mem_pct / 100.0 * 1.5e9
+            c.net_rx_rate = max(0.0, c.net_rx_rate * random.uniform(0.6, 1.5))
+            c.net_tx_rate = max(0.0, c.net_tx_rate * random.uniform(0.6, 1.5))
+            c.cpu_h.append(c.cpu)
+            c.mem_h.append(c.mem_pct)
+            c.rx_h.append(c.net_rx_rate)
+            c.tx_h.append(c.net_tx_rate)
+        cores = [min(99.0, max(2.0, v + random.uniform(-9, 9)))
+                 for v in model.cpu_cores]
+        model.cpu_cores = cores
+        model.cpu_total = sum(cores) / len(cores)
+        model.cpu_h.append(model.cpu_total)
+        model.mem_pct = min(95.0, max(5.0, model.mem_pct + random.uniform(-0.6, 0.6)))
+        model.mem_used = int(model.mem_pct / 100.0 * model.mem_total)
+        model.mem_h.append(model.mem_pct)
+    # occasionally append a fresh log line to a running container
+    if random.random() < 0.7:
+        running = [cid for cid in model.order
+                   if model.conts.get(cid) and model.conts[cid].state == "running"]
+        if running:
+            cid = random.choice(running)
+            meta = _DEMO["meta"][cid]
+            buf = _DEMO["logs"].setdefault(cid, [])
+            buf.append("2026-07-01T%s " % time.strftime("%H:%M:%S")
+                       + _demo_log_line(meta["image"], meta["name"], meta["ip"]))
+            if len(buf) > 400:
+                del buf[:len(buf) - 400]
+
+
+def start_demo(model):
+    stop = threading.Event()
+
+    def loop():
+        while not stop.is_set():
+            demo_tick(model)
+            stop.wait(0.7)
+    threading.Thread(target=loop, daemon=True).start()
+    return stop
+
+
+def _demo_peers(net):
+    out = []
+    for cid, m in _DEMO["meta"].items():
+        if m["net"] == net:
+            out.append((cid, m["name"], m["ip"]))
+    out.sort(key=lambda t: t[1])
+    return out
+
+
+def _demo_inspect(cid):
+    m = _DEMO["meta"].get(cid, {"name": "unknown", "image": "?", "net": "net",
+                                "ip": "0.0.0.0", "gw": "0.0.0.0", "ports": {}})
+    return {
+        "Id": cid + "0" * 52,
+        "Name": "/" + m["name"],
+        "Created": "2026-07-01T11:02:33.120Z",
+        "Path": "/entrypoint.sh",
+        "Args": ["--config", "/etc/app/config.yaml"],
+        "State": {"Status": "running", "Running": True, "Paused": False,
+                  "Pid": random.randint(1000, 9000), "ExitCode": 0,
+                  "StartedAt": "2026-07-01T11:02:34.5Z"},
+        "Image": "sha256:" + hashlib.md5(m["image"].encode()).hexdigest() * 2,
+        "Config": {"Hostname": cid, "Image": m["image"],
+                   "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/bin",
+                           "APP_ENV=production"],
+                   "Labels": {"com.docker.compose.project": m["proj"]}},
+        "NetworkSettings": {
+            "Ports": m["ports"],
+            "Networks": {m["net"]: {"IPAddress": m["ip"], "Gateway": m["gw"],
+                                    "MacAddress": "02:42:" + ":".join(
+                                        cid[i:i + 2] for i in range(0, 8, 2)),
+                                    "Aliases": [m["name"]]}}},
+    }
+
+
+_DEMO_FS = {
+    "/": [("app", True), ("bin", True), ("etc", True), ("lib", True),
+          ("usr", True), ("var", True), ("tmp", True), ("entrypoint.sh", False),
+          ("Dockerfile", False), (".dockerenv", False)],
+    "/app": [("node_modules", True), ("src", True), ("public", True),
+             ("package.json", False), ("server.js", False),
+             ("config.yaml", False), ("README.md", False)],
+    "/app/src": [("routes", True), ("models", True), ("index.js", False),
+                 ("db.js", False), ("auth.js", False)],
+    "/etc": [("nginx", True), ("ssl", True), ("hosts", False),
+             ("resolv.conf", False), ("passwd", False), ("hostname", False)],
+    "/etc/nginx": [("conf.d", True), ("nginx.conf", False),
+                   ("mime.types", False)],
+    "/var": [("log", True), ("lib", True), ("cache", True), ("run", True)],
+    "/var/log": [("app.log", False), ("access.log", False),
+                 ("error.log", False)],
+}
+
+
+def _demo_fs(path):
+    return list(_DEMO_FS.get(path, [("(empty)", False)]))
+
+
 def selftest():
     model = Model()
+    if DEMO:
+        build_demo(model)
+        app = App(model)
+        app.compute_visible()
+        sel = app.selected()
+        if sel:
+            app.log_cache[sel.id] = get_logs(sel.id, tail=60)
+            app.log_fetch_t[sel.id] = time.monotonic()
+        w = int(os.environ.get("COLUMNS", 130))
+        h = int(os.environ.get("LINES", 42))
+        sys.stdout.write("\n".join(app.render(w, h).to_lines()) + RESET + "\n")
+        return
     rows, err = run_json_lines(
         ["docker", "ps", "-a", "--no-trunc", "--format", "{{json .}}"])
     now = time.time()
@@ -2082,6 +2398,7 @@ USAGE = """dtop {ver} - a btop-styled TUI to monitor & manage Docker containers
 usage: dtop [options]
 
 options:
+  --demo           run with curated fake data (great for screenshots/trying it)
   --theme NAME     start with a color theme ({themes})
   --list-themes    list available themes and exit
   --selftest       render one frame to stdout and exit (no TTY needed)
@@ -2090,6 +2407,7 @@ options:
 
 In-app keys: press ? for the full list. q to quit.
 Config (persisted theme) lives at ~/.config/dtop/config.
+Tip: dtop --demo --theme dracula  (then press t to try each theme)
 """.format(ver=__version__, themes="/".join(THEME_ORDER))
 
 
@@ -2104,6 +2422,8 @@ def main():
         for n in THEME_ORDER:
             print(n + ("  (current)" if n == (load_config() or "btop") else ""))
         return
+    global DEMO
+    DEMO = "--demo" in sys.argv
     ok = apply_cli_theme()
     if "--selftest" in sys.argv or "--once" in sys.argv:
         selftest()
@@ -2117,7 +2437,11 @@ def main():
         sys.exit(1)
 
     model = Model()
-    stop = start_threads(model)
+    if DEMO:
+        build_demo(model)
+        stop = start_demo(model)
+    else:
+        stop = start_threads(model)
     app = App(model)
 
     fd = sys.stdin.fileno()
@@ -2157,7 +2481,9 @@ def main():
             if app.request:
                 kind, cid, name = app.request
                 app.request = None
-                if kind == "shell":
+                if kind == "shell" and DEMO:
+                    app.set_toast("shell disabled in demo mode", Theme.warn)
+                elif kind == "shell":
                     run_interactive_shell(fd, old, cid, name)
                     prev_screen = None
                     bg = Theme.bg
@@ -2165,7 +2491,7 @@ def main():
                                      + CLEAR)
                     app.set_toast(f"exited shell: {name}", Theme.accent)
             now = time.time()
-            if now - last_host >= 1.0:
+            if not DEMO and now - last_host >= 1.0:
                 update_host(model)
                 last_host = now
             if resize_flag["v"]:

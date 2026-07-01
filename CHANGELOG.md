@@ -25,4 +25,6 @@ Initial release.
   cycling with `t`, `--theme`, `--list-themes`; persisted to
   `~/.config/dtop/config`.
 - Wide-character/emoji-aware, tab-safe rendering with per-panel clipping.
+- `--demo` mode: curated, animated fake data (no Docker required) for trying
+  dtop out and grabbing screenshots; works with every view and `--selftest`.
 - CLI: `--selftest`, `--version`, `--help`.
