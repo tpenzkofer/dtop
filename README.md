@@ -6,21 +6,9 @@ A [btop](https://github.com/aristocratos/btop)-styled terminal UI to **monitor a
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 
-```
-┌ ▟▙ dtop   docker 29.x  host   containers 11/14  images 12      ◈ btop  14:03:11 ┐
-│ cpu  ▁▂▃▄▅▆▇█ per-core + total braille graph      │ mem  RAM ██████▊──── 41.2%  │
-├───────────────────────────────────────────────────┴─────────────────────────────┤
-│ NAME              cpu history        CPU%        MEM%     MEM    NET↓  PIDS │ detail │
-│ ▶ web-frontend    ⣀⣠⣴⣶⣷⣦⣄⣀      ███▋── 42.1  █▊──  18.3   1.2G  0B/s   88 │ graphs │
-│ ▶ postgres        ⣀⣀⣀⣀⣀⣀⣀        ▏──── 0.4   ██▍─  22.1 632.8M  12kB/s  53 │  ↑↓    │
-├────────────────────────────────────────────────────────────────────────────────┤
-│ logs: web-frontend                                              l = full view      │
-│ 2026-07-01 request GET /health 200                                                │
-│ 2026-07-01 error: upstream timeout                                                 │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+![dtop screenshot](docs/screenshot.png)
 
-> Tip: run `dtop --selftest` to render one frame to stdout (handy for screenshots / a headless check).
+> Shown above in `--demo` mode. Try it yourself with `dtop --demo` (no Docker needed), or `dtop --selftest` to render one frame to stdout.
 
 ## Features
 
