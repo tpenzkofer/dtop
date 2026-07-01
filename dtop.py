@@ -51,6 +51,14 @@ CUR_HIDE = CSI + "?25l"
 CUR_SHOW = CSI + "?25h"
 CLEAR = CSI + "2J" + CSI + "H"
 RESET = CSI + "0m"
+OSC_BG_RESET = ESC + "]111" + ESC + "\\"   # reset terminal default background
+
+
+def term_bg_seq(rgb):
+    """OSC 11: set the terminal's default background (also colors the window
+    padding around the character grid) so no term-colored border shows."""
+    return f"{ESC}]11;#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}{ESC}\\"
+
 
 HIST = 300  # history samples kept per metric
 
@@ -2458,7 +2466,7 @@ def main():
     try:
         tty.setraw(fd)
         bg = Theme.bg
-        sys.stdout.write(ALT_ON + CUR_HIDE
+        sys.stdout.write(ALT_ON + CUR_HIDE + term_bg_seq(bg)
                          + f"{CSI}48;2;{bg[0]};{bg[1]};{bg[2]}m" + CLEAR)
         sys.stdout.flush()
         prev_screen = None
@@ -2502,9 +2510,10 @@ def main():
             if app.force_redraw:
                 app.force_redraw = False
                 prev_screen = None
-                # repaint terminal bg to the new theme, then clear
+                # repaint terminal bg (incl. window padding) to the new theme
                 bg = Theme.bg
-                sys.stdout.write(f"{CSI}48;2;{bg[0]};{bg[1]};{bg[2]}m" + CLEAR)
+                sys.stdout.write(term_bg_seq(bg)
+                                 + f"{CSI}48;2;{bg[0]};{bg[1]};{bg[2]}m" + CLEAR)
             if now - last_draw >= 0.2 or keys:
                 if w >= 40 and h >= 10:
                     scr = app.render(w, h)
@@ -2520,7 +2529,7 @@ def main():
                 last_draw = now
     finally:
         stop.set()
-        sys.stdout.write(RESET + CUR_SHOW + ALT_OFF)
+        sys.stdout.write(RESET + OSC_BG_RESET + CUR_SHOW + ALT_OFF)
         sys.stdout.flush()
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
@@ -2543,4 +2552,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        sys.stdout.write(RESET + CUR_SHOW + ALT_OFF)
+        sys.stdout.write(RESET + OSC_BG_RESET + CUR_SHOW + ALT_OFF)

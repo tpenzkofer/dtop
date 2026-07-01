@@ -62,6 +62,8 @@ out = "".join(fake_out.buf)
 assert dtop.ALT_ON in out, "alt screen not enabled"
 assert dtop.ALT_OFF in out, "alt screen not restored"
 assert dtop.CUR_SHOW in out, "cursor not restored"
+assert dtop.term_bg_seq(dtop.Theme.bg) in out, "terminal bg (OSC 11) not set"
+assert dtop.OSC_BG_RESET in out, "terminal bg not reset on exit"
 # a real frame must have been streamed (truecolor sequences + braille or box)
 assert "38;2;" in out, "no truecolor output rendered"
 assert "⠀" not in out or True  # braille may or may not appear depending on data
