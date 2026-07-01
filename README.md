@@ -6,14 +6,9 @@ A [btop](https://github.com/aristocratos/btop)-styled terminal UI to **monitor a
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 
-![dtop demo](docs/demo.gif)
-
-<details>
-<summary>Static screenshot</summary>
-
 ![dtop screenshot](docs/screenshot.png)
 
-</details>
+![dtop demo](docs/demo.gif)
 
 > Shown in `--demo` mode. Try it yourself with `dtop --demo` (no Docker needed), or `dtop --selftest` to render one frame to stdout. The GIF is scripted with [VHS](https://github.com/charmbracelet/vhs) — see [`docs/demo.tape`](docs/demo.tape).
 
